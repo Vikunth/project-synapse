@@ -612,7 +612,12 @@ def analyze_artifact(artifact: RunArtifact, source: Source) -> DoctorReport:
                 "Use a future or extended producer to capture RAM, GPU, context, and current "
                 "Ollama settings; rerunning the current runner alone cannot resolve those gaps."
             ),
-            verification="Confirm doctor reports complete status before acting on tuning findings.",
+            verification=(
+                "Verify metadata limitations are resolved or explicitly scoped. Doctor and "
+                "RunArtifact v1 remain limited for B4 producer-summary throughput; complete B4 "
+                "analysis requires a future schema and analyzer with recomputable batch elapsed "
+                "time and token totals."
+            ),
             risk="Incomplete evidence can produce misleading configuration changes.",
             diagnosis_ids=[diagnosis_id],
         )

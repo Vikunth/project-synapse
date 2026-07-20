@@ -466,6 +466,14 @@ def test_missing_metadata_rejects_null_and_unknown_placeholders() -> None:
     assert "RAM capacity" in " ".join(report.limitations)
     assert recommendation.title == "Capture richer benchmark metadata"
     assert "current runner alone cannot resolve" in recommendation.action
+    assert "remain limited for B4" in recommendation.verification
+    assert "future schema and analyzer" in recommendation.verification
+    assert "recomputable batch elapsed time and token totals" in recommendation.verification
+    assert all(
+        "reports complete" not in item.verification.casefold()
+        and "strict success" not in item.verification.casefold()
+        for item in report.recommendations
+    )
     assert any(
         "10 milliseconds median" in item for item in report.acceptance.proxy_gate_requirements
     )
