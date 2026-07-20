@@ -8,12 +8,15 @@
 | Phase 0 harness | Done | B0-B4 quick/full CLI, hard timeouts, atomic artifacts, 43 tests, and CI. |
 | Smoke results | Done | Live WSL quick run completed; prompt bodies were not persisted. |
 | Full baseline | Done | Prompt-free B0-B4 native artifact committed as `benchmarks/results/baseline.json`. |
+| Baseline analysis | Done | Statistical report, deterministic figures, methodology limits, and CEO review recorded. |
+| Offline Doctor | Done | Read-only JSON/Markdown analyzer; 72 tests; independent QA closed all P0-P3 findings. |
 | Streaming proxy | Gated | Requires usable native baseline first. |
 | Dashboard UI | Done | Accessible mock-only control room in its own repository; live adapter remains gated. |
 
 ### Pull requests
 
 - Backend: [PR #1 - resilient Ollama benchmark harness](https://github.com/Vikunth/project-synapse/pull/1) (draft, `feat/benchmark-harness` -> `dev`)
+- Doctor: [PR #2 - offline Synapse Doctor](https://github.com/Vikunth/project-synapse/pull/2) (draft, stacked `feat/doctor` -> `dev`; depends on PR #1)
 - UI: [PR #1 - Phase 0 benchmark dashboard](https://github.com/Vikunth/project-synapse-ui/pull/1) (draft, `feat/dashboard` -> `dev`)
 
 ### Benchmark summary
@@ -75,3 +78,20 @@
   `benchmarks/results/baseline.json` (SHA-256 starts `2F9DEFA94B82CFF`).
 - Kept proxy implementation gated: the native-only baseline does not prove that an external
   scheduler or prefix structure can add value beyond Ollama's existing residency/cache behavior.
+
+### 2026-07-21 04:40 IST - Doctor decision and implementation
+
+- CEO verdict: `RESHAPE IT`. Chose an offline read-only Doctor instead of a proxy.
+- Statistical review found fixed order, duplicate prompts, and state carryover; documented exact
+  safe/unsafe claims and a randomized native crossover protocol.
+- Added `synapse doctor` with bounded strict-UTF-8 RunArtifact v1 input, deterministic versioned
+  JSON/Markdown, prompt/host/error redaction, and no network, subprocess, environment inspection,
+  or configuration mutation.
+- Added benchmark figures, CEO review, Doctor contract, and ADR 001.
+- Independent QA found and closed unverified-throughput confidence, impossible recommendation,
+  duplicate-evidence, temporary cleanup, Markdown injection, rendering completeness, encoding,
+  and output-guarantee defects. Final suite: 72/72 tests plus Ruff, formatting, and strict MyPy.
+- Doctor v1 deliberately marks B4 evidence limited because RunArtifact v1 lacks recomputable batch
+  elapsed/token totals. The proxy gate remains `not_evaluable`.
+- Preserved root verification outputs for morning review at
+  `.agents/temp/doctor-root-verify-20260721/`; no project files were deleted.
