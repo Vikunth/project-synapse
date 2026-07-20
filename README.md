@@ -10,10 +10,10 @@ This repository contains the Python backend, benchmark harness, API contracts, t
 
 ## Current status
 
-- Phase: benchmark foundation
+- Phase: full native baseline captured; proxy decision pending review
 - Supported environment: Ubuntu on WSL2, with Ollama running on the Windows host
 - Locally available models: `qwen2.5:3b` and `qwen2.5-coder:7b`
-- Proxy implementation: gated on completed baseline evidence
+- Proxy implementation: gated because the native baseline does not yet prove incremental proxy value
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for boundaries and [OVERNIGHT_LOG.md](OVERNIGHT_LOG.md) for the current run.
 
@@ -48,6 +48,7 @@ needed, for example `OLLAMA_HOST=http://172.27.224.1:11434`. Public hosts are re
 
 Results are written atomically under `benchmarks/results/runs/`. B0 is *runtime-cold*: it
 unloads Ollama residency but does not clear the operating-system page cache or emulate a reboot.
+The reviewed full native artifact is committed at `benchmarks/results/baseline.json`.
 
 ## Privacy
 

@@ -7,7 +7,7 @@
 | Repository split | Done | Backend and UI are separate public repositories with protected `main` branches. |
 | Phase 0 harness | Done | B0-B4 quick/full CLI, hard timeouts, atomic artifacts, 43 tests, and CI. |
 | Smoke results | Done | Live WSL quick run completed; prompt bodies were not persisted. |
-| Full baseline | Pending | Smoke observations are not the committed full baseline. |
+| Full baseline | Done | Prompt-free B0-B4 native artifact committed as `benchmarks/results/baseline.json`. |
 | Streaming proxy | Gated | Requires usable native baseline first. |
 | Dashboard UI | Done | Accessible mock-only control room in its own repository; live adapter remains gated. |
 
@@ -26,13 +26,13 @@
 
 ### Blockers for Vikunth
 
-- No credential blocker. The full B0-B4 profile remains required before proxy work.
+- No credential blocker. A proxy experiment still needs a specific hypothesis and native comparison threshold.
 
 ### First three morning actions
 
 1. Review both draft PRs and the smoke methodology.
-2. Run/approve the full WSL profile before accepting `baseline.json`.
-3. Keep the proxy gated until the full result shows incremental value beyond native Ollama.
+2. Review and accept the full native `baseline.json` methodology.
+3. Define a narrow proxy hypothesis only if it can beat the native baseline without conflating residency and prefix reuse.
 
 ## Timeline
 
@@ -60,3 +60,18 @@
 - Completed B0/B1/B2/B4 smoke artifact `20260720T222147Z-78b81ec5.json`.
 - Completed isolated B3 artifact `20260720T222441Z-a2b374f1.json` with a 90-second bound.
 - Verified both artifacts contain no prompt field or URL userinfo. Unloaded both models after B3.
+
+### 2026-07-21 04:17 IST - full native baseline
+
+- Completed the full B0-B4 profile in 11m58s: 71/71 trials succeeded.
+- B0 runtime-cold median TTFT: 15.594 s (trimmed standard deviation 1.072 s).
+- B1 stable-prefix median TTFT: 0.635 s; 95.93% below B0, but the comparison includes
+  residency and must not be presented as isolated KV-prefix-cache improvement.
+- B2 warm TTFT medians: 0.656 s (128), 0.711 s (256), 0.682 s (512), 0.762 s (1024).
+- B3 observed no model eviction across ten alternations; no cold-recovery value was applicable.
+- B4 throughput: 1.48 tok/s (c1), 4.17 (c4), 4.67 (c8), 4.51 (c16); p95 latency
+  increased from 16.21 s at c1 to 81.98 s at c16.
+- Verified the artifact contains no prompt body or URL userinfo and copied it byte-for-byte to
+  `benchmarks/results/baseline.json` (SHA-256 starts `2F9DEFA94B82CFF`).
+- Kept proxy implementation gated: the native-only baseline does not prove that an external
+  scheduler or prefix structure can add value beyond Ollama's existing residency/cache behavior.
