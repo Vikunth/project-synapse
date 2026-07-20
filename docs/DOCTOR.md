@@ -12,9 +12,12 @@ synapse doctor benchmarks/results/baseline.json --format json
 synapse doctor benchmarks/results/baseline.json --output-dir reports/
 ```
 
-The default writes Markdown to stdout and creates no files. `--output-dir` atomically creates
-both `<run_id>.doctor.v1.json` and `<run_id>.doctor.v1.md`; the directory must exist, and either
-existing target causes the operation to fail without overwriting anything.
+The default writes Markdown to stdout and creates no files. `--output-dir` stages both
+`<run_id>.doctor.v1.json` and `<run_id>.doctor.v1.md`, then publishes each file atomically and
+exclusively. The directory must exist, and either existing target causes the operation to fail
+without overwriting anything. A caught second-publish failure rolls back the first; a process or
+power failure between the two publishes can leave a partial pair and should be rerun after the
+operator preserves or removes that partial output.
 
 Exit codes:
 
@@ -32,7 +35,7 @@ Untrusted local JSON
   -> pure deterministic rules
   -> versioned DoctorReport
        -> escaped Markdown stdout
-       -> optional exclusive atomic JSON + Markdown files
+       -> optional staged JSON + Markdown; each file is atomic/exclusive
 
   X no Ollama, network, subprocess, environment read, or setting mutation
 ```
@@ -63,6 +66,11 @@ have observed them.
 The current benchmark producer does not record validated RAM/GPU details, allocated context, or
 active Ollama server controls. Rerunning the same producer cannot remove that limitation; a future
 or extended artifact producer is required before Doctor may offer memory tuning.
+
+RunArtifact/DoctorReport v1 also lacks the batch elapsed/token totals needed to recompute B4
+throughput. A v1 report containing B4 therefore remains deliberately `limited`, and `--strict`
+returns 3. A future artifact schema and analyzer—not a simple rerun—are required for a fully
+recomputable concurrency diagnosis.
 
 ## Product Gate
 

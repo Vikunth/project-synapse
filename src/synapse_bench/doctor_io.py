@@ -222,7 +222,7 @@ def _temporary(path: Path, content: str) -> Path:
 
 
 def write_reports(report: DoctorReport, output_dir: Path) -> tuple[Path, Path]:
-    """Atomically create both reports, rolling back if either exclusive create fails."""
+    """Stage both reports, publish each exclusively, and roll back caught failures."""
     if not output_dir.is_dir():
         raise DoctorInputError("output directory must already exist")
     json_path = output_dir / f"{report.source.run_id}.doctor.v1.json"

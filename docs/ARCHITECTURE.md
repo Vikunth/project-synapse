@@ -53,8 +53,9 @@ May begin only after a usable native baseline exists. It must stream without buf
 Doctor reads one bounded, untrusted local `RunArtifact` and emits a deterministic versioned
 diagnostic report. It has no database, server endpoints, runtime network access, subprocesses, or
 configuration mutation. It strips prompt hashes, raw errors, host data, absolute paths, and
-unknown metadata at the input boundary. Optional output uses atomic exclusive creation and never
-overwrites existing files.
+unknown metadata at the input boundary. Optional output stages both reports and publishes each
+file atomically and exclusively with best-effort pair rollback; it never overwrites an existing
+file. A process crash between the two publishes can leave a visible partial pair.
 
 At approximately 100 installs, schema compatibility, deterministic support bundles, and Windows/
 WSL path behavior dominate. At 1,000 installs, signed releases, current-plus-previous schema
