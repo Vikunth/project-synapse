@@ -40,15 +40,17 @@ class OllamaClient:
         await self._client.aclose()
 
     async def installed_models(self) -> set[str]:
-        response = await self._client.get("/api/tags")
-        response.raise_for_status()
-        data = response.json()
+        async with asyncio.timeout(self._settings.response_timeout_s):
+            response = await self._client.get("/api/tags")
+            response.raise_for_status()
+            data = response.json()
         return {str(model["name"]) for model in data.get("models", []) if "name" in model}
 
     async def resident_models(self) -> set[str]:
-        response = await self._client.get("/api/ps")
-        response.raise_for_status()
-        data = response.json()
+        async with asyncio.timeout(self._settings.response_timeout_s):
+            response = await self._client.get("/api/ps")
+            response.raise_for_status()
+            data = response.json()
         return {str(model["name"]) for model in data.get("models", []) if "name" in model}
 
     async def unload(self, model: str) -> bool:

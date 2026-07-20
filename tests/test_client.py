@@ -1,5 +1,6 @@
 import asyncio
 import json
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
@@ -25,6 +26,24 @@ class SlowResidencyTransport(httpx.AsyncBaseTransport):
             return httpx.Response(200, request=request, json={"done": True})
         await asyncio.sleep(0.05)
         return httpx.Response(200, request=request, json={"models": [{"name": "test"}]})
+
+
+class DelayedMetadataTransport(httpx.AsyncBaseTransport):
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.05)
+        return httpx.Response(200, request=request, json={"models": []})
+
+
+class DripJsonStream(httpx.AsyncByteStream):
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in (b'{"models":', b"[]", b"}"):
+            await asyncio.sleep(0.02)
+            yield chunk
+
+
+class DripMetadataTransport(httpx.AsyncBaseTransport):
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, stream=DripJsonStream())
 
 
 @pytest.mark.asyncio
@@ -135,3 +154,19 @@ async def test_installed_and_resident_models_parse_ollama_contract() -> None:
     async with OllamaClient(_settings(), transport=httpx.MockTransport(handler)) as client:
         assert await client.installed_models() == {"a:latest"}
         assert await client.resident_models() == {"b:latest"}
+
+
+@pytest.mark.asyncio
+async def test_installed_models_outer_timeout_caps_delayed_tags_response() -> None:
+    settings = BenchmarkSettings(ollama_host="http://127.0.0.1:11434", response_timeout_s=0.01)
+    async with OllamaClient(settings, transport=DelayedMetadataTransport()) as client:
+        with pytest.raises(TimeoutError):
+            await client.installed_models()
+
+
+@pytest.mark.asyncio
+async def test_resident_models_outer_timeout_caps_drip_fed_ps_response() -> None:
+    settings = BenchmarkSettings(ollama_host="http://127.0.0.1:11434", response_timeout_s=0.03)
+    async with OllamaClient(settings, transport=DripMetadataTransport()) as client:
+        with pytest.raises(TimeoutError):
+            await client.resident_models()
