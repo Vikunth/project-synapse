@@ -46,15 +46,31 @@ def _finish_scenario(
     trim_extremes: bool = False,
     minimum_successes: int = 1,
 ) -> ScenarioResult:
-    durations = [
+    total_durations = [
         trial.total_s
         for trial in scenario.trials
         if trial.status == Status.SUCCESS and trial.total_s is not None
     ]
+    ttft_durations = [
+        trial.ttft_s
+        for trial in scenario.trials
+        if trial.status == Status.SUCCESS and trial.ttft_s is not None
+    ]
     scenario.status = _status(scenario.trials, minimum_successes=minimum_successes)
-    scenario.summary.update(latency_summary(durations, trim_extremes=trim_extremes))
+    scenario.summary.update(
+        _prefixed_summary("ttft", latency_summary(ttft_durations, trim_extremes=trim_extremes))
+    )
+    scenario.summary.update(
+        _prefixed_summary("total", latency_summary(total_durations, trim_extremes=trim_extremes))
+    )
     scenario.finished_at = datetime.now(UTC)
     return scenario
+
+
+def _prefixed_summary(
+    prefix: str, values: dict[str, float | int | None]
+) -> dict[str, float | int | None]:
+    return {f"{prefix}_{key}": value for key, value in values.items()}
 
 
 async def benchmark_b0(
@@ -65,7 +81,8 @@ async def benchmark_b0(
     result.notes.append(
         "Runtime-cold: Ollama residency is cleared; operating-system page cache is not."
     )
-    prefix = stable_prefix(128, settings.seed)
+    prefix_target = 128 if settings.profile == "quick" else 512
+    prefix = stable_prefix(prefix_target, settings.seed)
     trial_count = 3 if settings.profile == "quick" else 7
     minimum_successes = 2 if settings.profile == "quick" else 5
     for index in range(trial_count):
@@ -100,7 +117,7 @@ async def benchmark_b0(
                     trial=index,
                     model=settings.primary_model,
                     prompt=prompt_for(prefix, index),
-                    prefix_tokens_target=128,
+                    prefix_tokens_target=prefix_target,
                 )
             )
         progress(result)
@@ -117,7 +134,7 @@ async def benchmark_b1(
     """B1: repeated stable prefix with unique suffixes."""
     result = ScenarioResult(name="B1_stable_prefix", status=Status.PARTIAL)
     prefix = stable_prefix(512, settings.seed)
-    trial_count = 3 if settings.profile == "quick" else 7
+    trial_count = 3 if settings.profile == "quick" else 5
     for index in range(trial_count):
         result.trials.append(
             await client.generate(
@@ -129,7 +146,7 @@ async def benchmark_b1(
             )
         )
         progress(result)
-    return _finish_scenario(result, minimum_successes=2 if settings.profile == "quick" else 5)
+    return _finish_scenario(result, minimum_successes=2 if settings.profile == "quick" else 4)
 
 
 async def benchmark_b2(
@@ -162,7 +179,15 @@ async def benchmark_b2(
             and trial.status == Status.SUCCESS
             and trial.total_s is not None
         ]
-        target_summary = latency_summary(values)
+        target_summary = _prefixed_summary("total", latency_summary(values))
+        ttft_values = [
+            trial.ttft_s
+            for trial in result.trials
+            if trial.prefix_tokens_target == target
+            and trial.status == Status.SUCCESS
+            and trial.ttft_s is not None
+        ]
+        target_summary.update(_prefixed_summary("ttft", latency_summary(ttft_values)))
         for key, value in target_summary.items():
             result.summary[f"{target}_{key}"] = value
     return result
@@ -187,7 +212,7 @@ async def benchmark_b3(
         result.finished_at = datetime.now(UTC)
         return result
     prefix = stable_prefix(128, settings.seed)
-    repeats = 1 if settings.profile == "quick" else 3
+    repeats = 1 if settings.profile == "quick" else 5
     models = (settings.primary_model, settings.secondary_model) * repeats
     for index, model in enumerate(models):
         result.trials.append(
@@ -282,6 +307,7 @@ async def run_benchmarks(settings: BenchmarkSettings, selected: list[str]) -> Pa
                     break
             else:
                 artifact.scenarios.append(active)
+        _add_b1_baseline_comparison(artifact)
         write_artifact_atomic(output_path, artifact)
 
     checkpoint()
@@ -316,3 +342,28 @@ def _setup_failure(
         error_type=type(error).__name__,
         error_message=str(error)[:500],
     )
+
+
+def _add_b1_baseline_comparison(artifact: RunArtifact) -> None:
+    """Add a descriptive B1-versus-B0 TTFT comparison when both are available."""
+    by_name = {scenario.name: scenario for scenario in artifact.scenarios}
+    b0 = by_name.get("B0_runtime_cold")
+    b1 = by_name.get("B1_stable_prefix")
+    if b0 is None or b1 is None:
+        return
+    b0_median = b0.summary.get("ttft_median_s")
+    b1_median = b1.summary.get("ttft_median_s")
+    if not isinstance(b0_median, int | float) or not isinstance(b1_median, int | float):
+        return
+    if b0_median <= 0:
+        return
+    reduction = (b0_median - b1_median) / b0_median * 100
+    b1.summary["baseline_b0_ttft_median_s"] = b0_median
+    b1.summary["ttft_reduction_vs_b0_percent"] = reduction
+    observation = "exceeds" if reduction > 40 else "does not exceed"
+    note = (
+        f"Observed TTFT reduction {observation} 40%; this is descriptive evidence, "
+        "not a pass/fail gate."
+    )
+    b1.notes = [existing for existing in b1.notes if "Observed TTFT reduction" not in existing]
+    b1.notes.append(note)
