@@ -17,6 +17,12 @@ This repository contains the Python backend, benchmark harness, API contracts, t
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for boundaries and [OVERNIGHT_LOG.md](OVERNIGHT_LOG.md) for the current run.
 
+Decision documents:
+
+- [Native baseline report](docs/BENCHMARK_REPORT.md)
+- [Post-baseline CEO review](docs/CEO_REVIEW.md)
+- [Offline Doctor contract](docs/DOCTOR.md)
+
 ## Benchmark commands
 
 Install the locked development environment and run local quality checks:
@@ -49,6 +55,22 @@ needed, for example `OLLAMA_HOST=http://172.27.224.1:11434`. Public hosts are re
 Results are written atomically under `benchmarks/results/runs/`. B0 is *runtime-cold*: it
 unloads Ollama residency but does not clear the operating-system page cache or emulate a reboot.
 The reviewed full native artifact is committed at `benchmarks/results/baseline.json`.
+
+## Offline Doctor
+
+Analyze an existing artifact without contacting Ollama or changing settings:
+
+```bash
+uv run synapse doctor benchmarks/results/baseline.json
+uv run synapse doctor benchmarks/results/baseline.json --format json
+mkdir -p reports
+uv run synapse doctor benchmarks/results/baseline.json --output-dir reports
+```
+
+The default writes Markdown only to stdout. `--output-dir` creates versioned JSON and Markdown
+without overwriting existing files. Doctor reports omit prompt hashes, raw errors, absolute paths,
+and Ollama host data. Findings recommend controlled experiments; they do not prove proxy value or
+automatically mutate configuration.
 
 ## Privacy
 

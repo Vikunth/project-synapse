@@ -2,6 +2,9 @@
 
 Status: accepted for the benchmark milestone; proxy and cache optimizer remain gated.
 
+The post-baseline decision adds an offline Doctor milestone. See
+[`docs/adr/001-doctor-before-proxy.md`](adr/001-doctor-before-proxy.md).
+
 ## Scope and assumptions
 
 - The backend and UI are separate repositories and communicate only through a versioned HTTP contract.
@@ -44,6 +47,19 @@ Produces machine-readable results for runtime-cold latency, same-prefix warm beh
 ### Milestone 1: transparent proxy (gated)
 
 May begin only after a usable native baseline exists. It must stream without buffering and initially perform no speculative batching or prompt reordering.
+
+### Milestone 0.5: offline Doctor
+
+Doctor reads one bounded, untrusted local `RunArtifact` and emits a deterministic versioned
+diagnostic report. It has no database, server endpoints, runtime network access, subprocesses, or
+configuration mutation. It strips prompt hashes, raw errors, host data, absolute paths, and
+unknown metadata at the input boundary. Optional output uses atomic exclusive creation and never
+overwrites existing files.
+
+At approximately 100 installs, schema compatibility, deterministic support bundles, and Windows/
+WSL path behavior dominate. At 1,000 installs, signed releases, current-plus-previous schema
+support, compatibility matrices, and explicitly opt-in telemetry require a new review. No central
+aggregation is part of this milestone.
 
 ### Milestone 2: optimization experiments (gated)
 
