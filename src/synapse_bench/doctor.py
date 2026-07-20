@@ -22,7 +22,7 @@ from synapse_bench.doctor_models import (
 from synapse_bench.models import RunArtifact, ScenarioResult, Status, TrialResult
 from synapse_bench.stats import percentile
 
-ANALYZER_VERSION = "1.0.0"
+ANALYZER_VERSION = "1.0.1"
 RESIDENCY_REDUCTION_PERCENT = 30.0
 RESIDENCY_INFO_PERCENT = 10.0
 RESIDENCY_REDUCTION_SECONDS = 1.0
@@ -54,7 +54,34 @@ def _scenario_map(artifact: RunArtifact, analysis: Analysis) -> dict[str, Scenar
         analysis.limit("Duplicate scenario names make scenario selection ambiguous.")
     result: dict[str, ScenarioResult] = {}
     for scenario in artifact.scenarios:
-        result.setdefault(scenario.name, scenario)
+        identities = Counter(
+            (
+                trial.scenario,
+                trial.trial,
+                trial.model,
+                trial.prefix_tokens_target,
+                trial.concurrency,
+            )
+            for trial in scenario.trials
+        )
+        valid_trials = [
+            trial
+            for trial in scenario.trials
+            if trial.scenario == scenario.name
+            and identities[
+                (
+                    trial.scenario,
+                    trial.trial,
+                    trial.model,
+                    trial.prefix_tokens_target,
+                    trial.concurrency,
+                )
+            ]
+            == 1
+        ]
+        if len(valid_trials) != len(scenario.trials):
+            analysis.limit("Mismatched or duplicate trial identities were excluded from analysis.")
+        result.setdefault(scenario.name, scenario.model_copy(update={"trials": valid_trials}))
     return result
 
 
@@ -325,6 +352,10 @@ def _diagnose_concurrency(scenarios: dict[str, ScenarioResult], analysis: Analys
     if scenario is None:
         analysis.limit("B4 is required to identify a concurrency knee.")
         return
+    analysis.limit(
+        "B4 aggregate throughput comes from an unverified producer summary because "
+        "RunArtifact 1.0 does not persist batch elapsed time."
+    )
     requested: dict[int, list[TrialResult]] = {}
     for trial in scenario.trials:
         if trial.concurrency is not None:
@@ -373,7 +404,7 @@ def _diagnose_concurrency(scenarios: dict[str, ScenarioResult], analysis: Analys
             category="concurrency",
             title=f"Concurrency {knee[0]} is the measured throughput knee",
             finding="This is the smallest level reaching at least 90% of measured peak throughput.",
-            confidence="high",
+            confidence="medium",
             evidence=Evidence(
                 scenario="B4_concurrency",
                 metric="concurrency_knee",
@@ -381,7 +412,10 @@ def _diagnose_concurrency(scenarios: dict[str, ScenarioResult], analysis: Analys
                 unit="requests",
                 sample_count=knee[3],
             ),
-            limitations=["The selected level is descriptive, not a recommended production value."],
+            limitations=[
+                "Aggregate throughput is an unverified producer summary in RunArtifact 1.0.",
+                "The selected level is descriptive, not a recommended production value.",
+            ],
             recommendation_ids=["SYN-REC-CONCURRENCY-EXPERIMENT-001"],
         )
     )
@@ -405,7 +439,7 @@ def _diagnose_concurrency(scenarios: dict[str, ScenarioResult], analysis: Analys
                     finding=(
                         "Throughput improves less than 10% while p95 latency grows at least 50%."
                     ),
-                    confidence="high",
+                    confidence="medium",
                     evidence=Evidence(
                         scenario="B4_concurrency",
                         metric="p95_growth_vs_knee",
@@ -413,6 +447,9 @@ def _diagnose_concurrency(scenarios: dict[str, ScenarioResult], analysis: Analys
                         unit="percent",
                         sample_count=count,
                     ),
+                    limitations=[
+                        "Aggregate throughput is an unverified producer summary in RunArtifact 1.0."
+                    ],
                     recommendation_ids=["SYN-REC-CONCURRENCY-EXPERIMENT-001"],
                 )
             )
@@ -430,11 +467,11 @@ def _diagnose_concurrency(scenarios: dict[str, ScenarioResult], analysis: Analys
     )
 
 
-def _diagnose_failures(artifact: RunArtifact, analysis: Analysis) -> None:
-    trials = [trial for scenario in artifact.scenarios for trial in scenario.trials]
+def _diagnose_failures(scenarios: dict[str, ScenarioResult], analysis: Analysis) -> None:
+    trials = [trial for scenario in scenarios.values() for trial in scenario.trials]
     failed = [trial for trial in trials if trial.status in {Status.FAILED, Status.PARTIAL}]
     partial_scenarios = sum(
-        scenario.status in {Status.FAILED, Status.PARTIAL} for scenario in artifact.scenarios
+        scenario.status in {Status.FAILED, Status.PARTIAL} for scenario in scenarios.values()
     )
     if not failed and not partial_scenarios:
         return
@@ -499,16 +536,32 @@ def _safe_error_category(error_type: str | None) -> str:
 def _environment_limitations(artifact: RunArtifact, analysis: Analysis) -> None:
     configuration = artifact.configuration
     environment = artifact.environment
+
+    def meaningful(value: Any) -> bool:
+        if value is None or value is False:
+            return False
+        if isinstance(value, str):
+            normalized = value.strip().casefold()
+            return bool(normalized) and normalized not in {"unknown", "null", "none"}
+        if isinstance(value, (list, dict)):
+            return bool(value)
+        return True
+
     required_groups = {
         "RAM capacity": any(
-            "ram" in key.casefold() or "memory" in key.casefold() for key in environment
+            ("ram" in key.casefold() or "memory" in key.casefold()) and meaningful(value)
+            for key, value in environment.items()
         ),
-        "GPU details": any("gpu" in key.casefold() for key in environment),
+        "GPU details": any(
+            "gpu" in key.casefold() and meaningful(value) for key, value in environment.items()
+        ),
         "context setting": any(
-            "ctx" in key.casefold() or "context" in key.casefold() for key in configuration
+            ("ctx" in key.casefold() or "context" in key.casefold()) and meaningful(value)
+            for key, value in configuration.items()
         ),
         "current Ollama controls": any(
-            "keep_alive" in key.casefold() or "parallel" in key.casefold() for key in configuration
+            ("keep_alive" in key.casefold() or "parallel" in key.casefold()) and meaningful(value)
+            for key, value in configuration.items()
         ),
     }
     missing = [name for name, present in required_groups.items() if not present]
@@ -526,7 +579,7 @@ def analyze_artifact(artifact: RunArtifact, source: Source) -> DoctorReport:
     _diagnose_prefix_tail(scenarios, analysis)
     _diagnose_residency_eviction(scenarios, analysis)
     _diagnose_concurrency(scenarios, analysis)
-    _diagnose_failures(artifact, analysis)
+    _diagnose_failures(scenarios, analysis)
     _environment_limitations(artifact, analysis)
     if analysis.limitations:
         diagnosis_id = "SYN-DOC-ARTIFACT-LIMITED-001"
@@ -553,9 +606,12 @@ def analyze_artifact(artifact: RunArtifact, source: Source) -> DoctorReport:
             id="SYN-REC-ARTIFACT-RERUN-001",
             priority="now",
             type="observe",
-            title="Capture a complete benchmark artifact",
-            rationale="Complete measurements and metadata are required for safe diagnosis.",
-            action="Rerun the benchmark after resolving the listed limitations.",
+            title="Capture richer benchmark metadata",
+            rationale="Complete measurements and runtime metadata are required for safe diagnosis.",
+            action=(
+                "Use a future or extended producer to capture RAM, GPU, context, and current "
+                "Ollama settings; rerunning the current runner alone cannot resolve those gaps."
+            ),
             verification="Confirm doctor reports complete status before acting on tuning findings.",
             risk="Incomplete evidence can produce misleading configuration changes.",
             diagnosis_ids=[diagnosis_id],
@@ -584,7 +640,7 @@ def analyze_artifact(artifact: RunArtifact, source: Source) -> DoctorReport:
             artifact_complete=analysis.complete,
             proxy_gate_requirements=[
                 "Paired comparison demonstrates at least 30% p95 latency improvement.",
-                "Added proxy overhead is below 10 milliseconds p95.",
+                "Added proxy overhead is below 10 milliseconds median.",
                 "No reliability regression or unsafe memory behavior is observed.",
                 "At least three external users reproduce the problem and value the intervention.",
             ],

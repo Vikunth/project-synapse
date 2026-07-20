@@ -9,6 +9,7 @@ import math
 import os
 import re
 import tempfile
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,10 @@ SAFE_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 class DoctorInputError(ValueError):
     """Safe, non-payload-bearing input failure."""
+
+
+def _reject_json_constant(_value: str) -> None:
+    raise ValueError("non-standard numeric constant")
 
 
 def _validate_consumed_numbers(artifact: RunArtifact) -> None:
@@ -63,8 +68,9 @@ def load_artifact(path: Path) -> tuple[RunArtifact, Source]:
         raise DoctorInputError(f"artifact exceeds {MAX_ARTIFACT_BYTES} bytes")
     try:
         raw = path.read_bytes()
-        document: Any = json.loads(raw)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        decoded = raw.decode("utf-8", errors="strict")
+        document: Any = json.loads(decoded, parse_constant=_reject_json_constant)
+    except (OSError, UnicodeDecodeError, ValueError) as error:
         raise DoctorInputError("artifact must be valid UTF-8 JSON") from error
     if not isinstance(document, dict):
         raise DoctorInputError("artifact root must be an object")
@@ -97,7 +103,12 @@ def render_json(report: DoctorReport) -> str:
 
 
 def _text(value: object) -> str:
-    return html.escape(str(value), quote=True).replace("`", "&#96;")
+    normalized = "".join(
+        " " if unicodedata.category(character).startswith("C") else character
+        for character in str(value)
+    )
+    normalized = " ".join(normalized.split())
+    return html.escape(normalized, quote=True).replace("`", "&#96;")
 
 
 def render_markdown(report: DoctorReport) -> str:
@@ -122,15 +133,30 @@ def render_markdown(report: DoctorReport) -> str:
             [
                 f"### {diagnosis.id}: {_text(diagnosis.title)}",
                 "",
-                f"Severity: `{diagnosis.severity}` · Confidence: `{diagnosis.confidence}`",
+                f"Severity: `{diagnosis.severity}`; Confidence: `{diagnosis.confidence}`",
                 "",
                 _text(diagnosis.finding),
                 "",
                 (
-                    f"Evidence: `{_text(diagnosis.evidence.metric)}` = "
+                    f"Evidence: `{_text(diagnosis.evidence.scenario)}` / "
+                    f"`{_text(diagnosis.evidence.metric)}` = "
                     f"`{_text(diagnosis.evidence.value)}` "
                     f"`{_text(diagnosis.evidence.unit)}` "
                     f"(n={diagnosis.evidence.sample_count})."
+                ),
+                "",
+                "Limitations: "
+                + (
+                    "; ".join(_text(item) for item in diagnosis.limitations)
+                    if diagnosis.limitations
+                    else "None."
+                ),
+                "",
+                "Recommendations: "
+                + (
+                    ", ".join(f"`{_text(item)}`" for item in diagnosis.recommendation_ids)
+                    if diagnosis.recommendation_ids
+                    else "None."
                 ),
                 "",
             ]
@@ -141,7 +167,9 @@ def render_markdown(report: DoctorReport) -> str:
             [
                 f"### {recommendation.id}: {_text(recommendation.title)}",
                 "",
-                f"Priority: `{recommendation.priority}` · Type: `{recommendation.type}`",
+                f"Priority: `{recommendation.priority}`; Type: `{recommendation.type}`",
+                "",
+                f"Rationale: {_text(recommendation.rationale)}",
                 "",
                 _text(recommendation.action),
                 "",
@@ -149,8 +177,26 @@ def render_markdown(report: DoctorReport) -> str:
                 "",
                 f"Risk: {_text(recommendation.risk)}",
                 "",
+                "Diagnoses: "
+                + (
+                    ", ".join(f"`{_text(item)}`" for item in recommendation.diagnosis_ids)
+                    if recommendation.diagnosis_ids
+                    else "None."
+                ),
+                "",
             ]
         )
+        if recommendation.ollama_controls:
+            lines.extend(["Ollama controls:", ""])
+            for control in recommendation.ollama_controls:
+                lines.append(
+                    "- "
+                    f"`{_text(control.name)}`; scope={_text(control.scope)}; "
+                    f"current={_text(control.current_value)}; "
+                    f"proposed={_text(control.proposed_value)}; "
+                    f"docs={_text(control.docs_url)}"
+                )
+            lines.append("")
     lines.extend(["## Limitations", ""])
     if report.limitations:
         lines.extend(f"- {_text(item)}" for item in report.limitations)
@@ -184,7 +230,11 @@ def write_reports(report: DoctorReport, output_dir: Path) -> tuple[Path, Path]:
     if json_path.exists() or markdown_path.exists():
         raise FileExistsError("refusing to overwrite an existing doctor report")
     temporary_json = _temporary(json_path, render_json(report))
-    temporary_markdown = _temporary(markdown_path, render_markdown(report))
+    try:
+        temporary_markdown = _temporary(markdown_path, render_markdown(report))
+    except BaseException:
+        temporary_json.unlink(missing_ok=True)
+        raise
     created: list[Path] = []
     try:
         os.link(temporary_json, json_path)

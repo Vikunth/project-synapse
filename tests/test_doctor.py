@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
+import synapse_bench.doctor_io as doctor_io
 from synapse_bench.cli import app
 from synapse_bench.doctor import analyze_artifact
 from synapse_bench.doctor_io import (
@@ -88,6 +89,10 @@ def test_baseline_has_expected_diagnoses_and_closed_evidence_gate() -> None:
     assert "SYN-DOC-EVICTION-001" in ids
     assert report.summary.proxy_gate == "not_evaluable"
     assert report.status == "limited"
+    concurrency = [item for item in report.diagnoses if item.category == "concurrency"]
+    assert concurrency
+    assert all(item.confidence != "high" for item in concurrency)
+    assert any("unverified producer summary" in item for item in report.limitations)
 
 
 def test_residency_threshold_is_inclusive() -> None:
@@ -172,6 +177,45 @@ def test_summary_contradiction_is_limited_warning() -> None:
     assert residency.evidence.value == 50.0
 
 
+def test_malicious_b4_throughput_summary_never_becomes_trusted(tmp_path: Path) -> None:
+    path = tmp_path / "malicious-throughput.json"
+    document = _baseline_document()
+    b4 = next(item for item in document["scenarios"] if item["name"] == "B4_concurrency")
+    b4["summary"]["c1_tokens_per_second"] = 999_999.0
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    artifact, source = load_artifact(path)
+    report = analyze_artifact(artifact, source)
+    concurrency = [item for item in report.diagnoses if item.category == "concurrency"]
+
+    assert report.status == "limited"
+    assert concurrency
+    assert all(item.confidence in {"low", "medium"} for item in concurrency)
+    assert all(
+        any("unverified producer summary" in limitation for limitation in item.limitations)
+        for item in concurrency
+    )
+
+
+def test_duplicate_and_mismatched_trial_identities_are_excluded() -> None:
+    cold = [_trial("B0_runtime_cold", index, ttft=4.0) for index in range(5)]
+    cold[1] = cold[1].model_copy(update={"trial": 0})
+    cold[2] = cold[2].model_copy(update={"scenario": "wrong-container"})
+    warm = [_trial("B1_stable_prefix", index, ttft=2.0) for index in range(4)]
+    artifact = _artifact(
+        [
+            ScenarioResult(name="B0_runtime_cold", status=Status.SUCCESS, trials=cold),
+            ScenarioResult(name="B1_stable_prefix", status=Status.SUCCESS, trials=warm),
+        ]
+    )
+
+    report = analyze_artifact(artifact, _source())
+
+    assert report.status == "limited"
+    assert any("trial identities" in item for item in report.limitations)
+    assert not any(item.id == "SYN-DOC-RESIDENCY-001" for item in report.diagnoses)
+
+
 def test_failure_rate_at_twenty_percent_is_critical() -> None:
     trials = [_trial("custom", index) for index in range(4)]
     trials.append(_trial("custom", 4, status=Status.FAILED))
@@ -217,13 +261,34 @@ def test_input_accepts_v1_extra_keys(tmp_path: Path) -> None:
     assert artifact.run_id == document["run_id"]
 
 
-def test_input_rejects_nonfinite_consumed_metric(tmp_path: Path) -> None:
-    path = tmp_path / "nonfinite.json"
+def test_input_rejects_negative_consumed_metric(tmp_path: Path) -> None:
+    path = tmp_path / "negative.json"
     document = _baseline_document()
-    document["scenarios"][0]["trials"][0]["ttft_s"] = float("nan")
+    document["scenarios"][0]["trials"][0]["ttft_s"] = -1.0
     path.write_text(json.dumps(document), encoding="utf-8")
 
     with pytest.raises(DoctorInputError, match="invalid consumed numeric metric"):
+        load_artifact(path)
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_input_rejects_nonstandard_json_constants_anywhere(tmp_path: Path, constant: str) -> None:
+    path = tmp_path / "constant.json"
+    path.write_text(
+        '{"schema_version":"1.0","run_id":"x","environment":{},'
+        f'"configuration":{{}},"scenarios":[],"extra":{constant}}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DoctorInputError, match="valid UTF-8 JSON"):
+        load_artifact(path)
+
+
+def test_input_rejects_invalid_utf8(tmp_path: Path) -> None:
+    path = tmp_path / "invalid-utf8.json"
+    path.write_bytes(b'{"schema_version":"1.0","extra":"\xff"}')
+
+    with pytest.raises(DoctorInputError, match="valid UTF-8 JSON"):
         load_artifact(path)
 
 
@@ -314,6 +379,29 @@ def test_second_atomic_publish_failure_rolls_back_first(
     assert list(tmp_path.iterdir()) == []
 
 
+def test_second_temporary_creation_failure_cleans_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact, source = load_artifact(BASELINE)
+    report = analyze_artifact(artifact, source)
+    real_temporary = doctor_io._temporary
+    calls = 0
+
+    def fail_second(path: Path, content: str) -> Path:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("simulated temporary creation failure")
+        return real_temporary(path, content)
+
+    monkeypatch.setattr(doctor_io, "_temporary", fail_second)
+
+    with pytest.raises(OSError):
+        write_reports(report, tmp_path)
+
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_cli_stdout_writes_nothing_and_strict_reports_findings(tmp_path: Path) -> None:
     result = CliRunner().invoke(app, ["doctor", str(BASELINE)])
     strict = CliRunner().invoke(app, ["doctor", str(BASELINE), "--strict"])
@@ -343,3 +431,41 @@ def test_markdown_escapes_untrusted_artifact_name(tmp_path: Path) -> None:
 
     assert "artifact_`&raw.json" not in output
     assert "artifact_&#96;&amp;raw.json" in output
+
+
+def test_markdown_normalizes_controls_and_renders_contract_fields() -> None:
+    artifact, source = load_artifact(BASELINE)
+    source = source.model_copy(update={"artifact_name": "evil\r\nheading\x00.json"})
+    report = analyze_artifact(artifact, source)
+
+    output = render_markdown(report)
+
+    assert "evil\r\nheading" not in output
+    assert "evil heading .json" in output
+    assert "Rationale:" in output
+    assert "Diagnoses:" in output
+    assert "Ollama controls:" in output
+    assert "Limitations:" in output
+    assert "Evidence: `" in output
+
+
+def test_missing_metadata_rejects_null_and_unknown_placeholders() -> None:
+    artifact, source = load_artifact(BASELINE)
+    artifact = artifact.model_copy(
+        update={
+            "environment": {"ram_bytes": None, "gpu": "unknown"},
+            "configuration": {"num_ctx": "", "keep_alive": "none"},
+        }
+    )
+
+    report = analyze_artifact(artifact, source)
+    recommendation = next(
+        item for item in report.recommendations if item.id == "SYN-REC-ARTIFACT-RERUN-001"
+    )
+
+    assert "RAM capacity" in " ".join(report.limitations)
+    assert recommendation.title == "Capture richer benchmark metadata"
+    assert "current runner alone cannot resolve" in recommendation.action
+    assert any(
+        "10 milliseconds median" in item for item in report.acceptance.proxy_gate_requirements
+    )
