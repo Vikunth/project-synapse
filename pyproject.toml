@@ -17,6 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
+synapse = "synapse_bench.cli:app"
 synapse-bench = "synapse_bench.cli:app"
 
 [dependency-groups]
