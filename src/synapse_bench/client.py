@@ -52,14 +52,30 @@ class OllamaClient:
         return {str(model["name"]) for model in data.get("models", []) if "name" in model}
 
     async def unload(self, model: str) -> bool:
-        response = await self._client.post("/api/generate", json={"model": model, "keep_alive": 0})
-        response.raise_for_status()
-        deadline = time.monotonic() + self._settings.unload_timeout_s
-        while time.monotonic() < deadline:
-            if model not in await self.resident_models():
+        async with asyncio.timeout(self._settings.unload_timeout_s):
+            response = await self._client.post(
+                "/api/generate", json={"model": model, "keep_alive": 0}
+            )
+            response.raise_for_status()
+            return await self._poll_residency(model, expected=False)
+
+    async def preload(self, model: str) -> bool:
+        """Load a model and confirm residency without counting setup latency."""
+        async with asyncio.timeout(self._settings.response_timeout_s):
+            response = await self._client.post(
+                "/api/generate",
+                json={"model": model, "prompt": "", "stream": False, "keep_alive": "5m"},
+            )
+            response.raise_for_status()
+        async with asyncio.timeout(self._settings.unload_timeout_s):
+            return await self._poll_residency(model, expected=True)
+
+    async def _poll_residency(self, model: str, *, expected: bool) -> bool:
+        while True:
+            resident = model in await self.resident_models()
+            if resident is expected:
                 return True
             await asyncio.sleep(self._settings.poll_interval_s)
-        return False
 
     async def generate(
         self,
@@ -76,25 +92,26 @@ class OllamaClient:
         first_token_at: float | None = None
         final: dict[str, Any] = {}
         try:
-            async with self._client.stream(
-                "POST",
-                "/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": True,
-                    "keep_alive": "5m",
-                    "options": {"temperature": 0, "num_predict": 24},
-                },
-            ) as response:
-                response.raise_for_status()
-                async for item in _json_lines(response.aiter_lines()):
-                    if item.get("error"):
-                        raise RuntimeError(str(item["error"]))
-                    if item.get("response") and first_token_at is None:
-                        first_token_at = time.perf_counter()
-                    if item.get("done"):
-                        final = item
+            async with asyncio.timeout(self._settings.response_timeout_s):
+                async with self._client.stream(
+                    "POST",
+                    "/api/generate",
+                    json={
+                        "model": model,
+                        "prompt": prompt,
+                        "stream": True,
+                        "keep_alive": "5m",
+                        "options": {"temperature": 0, "num_predict": 24},
+                    },
+                ) as response:
+                    response.raise_for_status()
+                    async for item in _json_lines(response.aiter_lines()):
+                        if item.get("error"):
+                            raise RuntimeError(str(item["error"]))
+                        if item.get("response") and first_token_at is None:
+                            first_token_at = time.perf_counter()
+                        if item.get("done"):
+                            final = item
             finished = time.perf_counter()
             if first_token_at is None:
                 raise RuntimeError("stream completed without a generated token")
@@ -127,7 +144,7 @@ class OllamaClient:
                 total_s=time.perf_counter() - started,
                 prompt_sha256=fingerprint,
                 error_type=type(error).__name__,
-                error_message=str(error)[:500],
+                error_message=_safe_error_message(error, prompt),
             )
 
 
@@ -145,3 +162,11 @@ def _optional_int(value: object) -> int | None:
 
 def _nanoseconds_to_seconds(value: object) -> float | None:
     return value / 1_000_000_000 if isinstance(value, int | float) else None
+
+
+def _safe_error_message(error: Exception, prompt: str) -> str:
+    """Bound error evidence while removing any echoed prompt body."""
+    message = str(error)
+    if prompt:
+        message = message.replace(prompt, "<prompt-redacted>")
+    return message[:500]

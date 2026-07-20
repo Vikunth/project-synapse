@@ -30,6 +30,10 @@ class TrialResult(BaseModel):
     eval_count: int | None = None
     tokens_per_second: float | None = None
     prompt_sha256: str
+    measurement_kind: Literal["standard", "evicted_runtime_cold"] = "standard"
+    resident_models_before: list[str] | None = None
+    resident_models_after: list[str] | None = None
+    evicted_models: list[str] | None = None
     error_type: str | None = None
     error_message: str | None = None
 

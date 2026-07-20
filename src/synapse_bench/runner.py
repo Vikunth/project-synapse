@@ -133,6 +133,14 @@ async def benchmark_b1(
 ) -> ScenarioResult:
     """B1: repeated stable prefix with unique suffixes."""
     result = ScenarioResult(name="B1_stable_prefix", status=Status.PARTIAL)
+    try:
+        if not await client.preload(settings.primary_model):
+            raise RuntimeError("primary model was not resident after preload timeout")
+    except Exception as error:
+        result.status = Status.FAILED
+        result.notes.append(f"Preload failed: {type(error).__name__}: {str(error)[:500]}")
+        result.finished_at = datetime.now(UTC)
+        return result
     prefix = stable_prefix(512, settings.seed)
     trial_count = 3 if settings.profile == "quick" else 5
     for index in range(trial_count):
@@ -211,21 +219,92 @@ async def benchmark_b3(
         result.notes.append(f"Required local model(s) not installed: {', '.join(sorted(missing))}")
         result.finished_at = datetime.now(UTC)
         return result
+    try:
+        if not await client.preload(settings.primary_model):
+            raise RuntimeError("primary model was not resident after preload timeout")
+    except Exception as error:
+        result.status = Status.INFEASIBLE
+        result.notes.append(f"Residency preload failed: {type(error).__name__}: {str(error)[:500]}")
+        result.finished_at = datetime.now(UTC)
+        return result
     prefix = stable_prefix(128, settings.seed)
     repeats = 1 if settings.profile == "quick" else 5
     models = (settings.primary_model, settings.secondary_model) * repeats
+    observed_evictions: set[str] = set()
     for index, model in enumerate(models):
-        result.trials.append(
-            await client.generate(
+        try:
+            resident_before = await client.resident_models()
+            trial = await client.generate(
                 scenario="B3_model_residency",
                 trial=index,
                 model=model,
                 prompt=prompt_for(prefix, index),
                 prefix_tokens_target=128,
             )
-        )
+            resident_after = await client.resident_models()
+        except Exception as error:
+            result.trials.append(
+                _setup_failure(
+                    "B3_model_residency",
+                    index,
+                    model,
+                    prompt_for(prefix, index),
+                    error,
+                )
+            )
+            progress(result)
+            continue
+        evicted = resident_before - resident_after
+        trial.resident_models_before = sorted(resident_before)
+        trial.resident_models_after = sorted(resident_after)
+        trial.evicted_models = sorted(evicted)
+        observed_evictions.update(evicted & {settings.primary_model, settings.secondary_model})
+        result.trials.append(trial)
+        progress(result)
+    next_trial = len(models)
+    for model in sorted(observed_evictions):
+        recovery_prompt = prompt_for(prefix, next_trial)
+        try:
+            if not await client.unload(model):
+                raise RuntimeError("evicted target remained resident after unload timeout")
+            resident_before = await client.resident_models()
+            recovery = await client.generate(
+                scenario="B3_model_residency",
+                trial=next_trial,
+                model=model,
+                prompt=recovery_prompt,
+                prefix_tokens_target=128,
+            )
+            resident_after = await client.resident_models()
+            recovery.measurement_kind = "evicted_runtime_cold"
+            recovery.resident_models_before = sorted(resident_before)
+            recovery.resident_models_after = sorted(resident_after)
+            recovery.evicted_models = sorted(resident_before - resident_after)
+            result.trials.append(recovery)
+        except Exception as error:
+            failure = _setup_failure(
+                "B3_model_residency", next_trial, model, recovery_prompt, error
+            )
+            failure.measurement_kind = "evicted_runtime_cold"
+            result.trials.append(failure)
+        next_trial += 1
         progress(result)
     result = _finish_scenario(result, minimum_successes=1 if settings.profile == "quick" else 4)
+    recovery_ttfts = [
+        trial.ttft_s
+        for trial in result.trials
+        if trial.measurement_kind == "evicted_runtime_cold"
+        and trial.status == Status.SUCCESS
+        and trial.ttft_s is not None
+    ]
+    result.summary.update(
+        _prefixed_summary("evicted_runtime_cold_ttft", latency_summary(recovery_ttfts))
+    )
+    result.summary["observed_evicted_model_count"] = len(observed_evictions)
+    if not observed_evictions:
+        result.notes.append(
+            "No target-model eviction was observed; cold recovery was not applicable."
+        )
     if result.status == Status.FAILED:
         result.status = Status.INFEASIBLE
         result.notes.append("Alternating-model load was not feasible within configured bounds.")
@@ -316,13 +395,7 @@ async def run_benchmarks(settings: BenchmarkSettings, selected: list[str]) -> Pa
             scenario = await SCENARIOS[name](client, settings, checkpoint)
             checkpoint(scenario)
     statuses = {scenario.status for scenario in artifact.scenarios}
-    artifact.status = (
-        Status.SUCCESS
-        if statuses == {Status.SUCCESS}
-        else Status.FAILED
-        if statuses == {Status.FAILED}
-        else Status.PARTIAL
-    )
+    artifact.status = _aggregate_run_status(statuses)
     artifact.finished_at = datetime.now(UTC)
     checkpoint()
     return output_path
@@ -367,3 +440,18 @@ def _add_b1_baseline_comparison(artifact: RunArtifact) -> None:
     )
     b1.notes = [existing for existing in b1.notes if "Observed TTFT reduction" not in existing]
     b1.notes.append(note)
+
+
+def _aggregate_run_status(statuses: set[Status]) -> Status:
+    """Apply deterministic precedence to scenario outcomes."""
+    if not statuses:
+        return Status.FAILED
+    if statuses == {Status.SUCCESS}:
+        return Status.SUCCESS
+    if statuses == {Status.INFEASIBLE}:
+        return Status.INFEASIBLE
+    if Status.SUCCESS in statuses or Status.PARTIAL in statuses:
+        return Status.PARTIAL
+    if Status.FAILED in statuses:
+        return Status.FAILED
+    return Status.PARTIAL

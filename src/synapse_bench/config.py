@@ -48,6 +48,10 @@ def validate_local_url(value: str, allow_remote: bool) -> str:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
         raise ValueError("OLLAMA_HOST must be an absolute HTTP(S) URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("OLLAMA_HOST must not contain userinfo")
+    if parsed.query or parsed.fragment:
+        raise ValueError("OLLAMA_HOST must not contain a query or fragment")
     try:
         address = ipaddress.ip_address(parsed.hostname)
     except ValueError:

@@ -40,3 +40,16 @@ def test_validate_local_url_allows_remote_opt_in() -> None:
     assert validate_local_url("https://ollama.example.com/", allow_remote=True) == (
         "https://ollama.example.com"
     )
+
+
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("http://user:secret@127.0.0.1:11434", "userinfo"),
+        ("http://127.0.0.1:11434?token=secret", "query or fragment"),
+        ("http://127.0.0.1:11434#secret", "query or fragment"),
+    ],
+)
+def test_validate_local_url_rejects_secret_bearing_components(url: str, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        validate_local_url(url, allow_remote=False)
