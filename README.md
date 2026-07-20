@@ -32,9 +32,14 @@ uv run pytest
 From Ubuntu/WSL2, run a bounded smoke profile before the full Phase 0 suite:
 
 ```bash
+export UV_PROJECT_ENVIRONMENT="$HOME/.local/share/synapse-bench-venv"
+uv sync --locked --dev
 uv run synapse-bench run --profile quick
 uv run synapse-bench run --profile full
 ```
+
+Keep the WSL environment outside the repository. Windows and Linux virtual environments are
+not binary-compatible and must not share `.venv`.
 
 Use `--scenario b0` through `--scenario b4` to select individual scenarios. The harness
 discovers the WSL default gateway automatically. Override it with `OLLAMA_HOST` only when
