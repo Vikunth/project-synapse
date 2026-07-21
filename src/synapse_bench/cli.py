@@ -137,7 +137,7 @@ def doctor(
         bool,
         typer.Option(help="Exit 3 when analysis is limited or has warnings/critical findings."),
     ] = False,
- ) -> None:
+) -> None:
     """Diagnose a saved benchmark without contacting Ollama or inspecting the host."""
     try:
         if output_dir is not None and output_format != "markdown":
