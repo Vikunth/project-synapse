@@ -12,4 +12,5 @@ dist/
 .env.*
 !.env.example
 benchmarks/results/runs/
+benchmarks/results/native-probes/
 research/figures/
