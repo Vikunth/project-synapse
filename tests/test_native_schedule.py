@@ -36,6 +36,13 @@ def test_schedule_replay_and_hash_are_stable() -> None:
     assert schedule_sha256(left) == schedule_sha256(json.loads(json.dumps(right)))
 
 
+def test_smoke_dual_order_is_seeded_and_can_use_either_order() -> None:
+    schedules = [build_schedule(seed, "smoke", {"dual-residency"})["dual"] for seed in range(20)]
+
+    assert all(schedule in [[["solo", "dual"]], [["dual", "solo"]]] for schedule in schedules)
+    assert len({tuple(schedule[0]) for schedule in schedules}) == 2
+
+
 def test_synthetic_namespaces_are_unique_matched_length_and_differ_at_start() -> None:
     values = [synthetic_namespace(42, "case", str(index), 128) for index in range(20)]
 

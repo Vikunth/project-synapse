@@ -1,4 +1,5 @@
 import asyncio
+import os
 from pathlib import Path
 
 import httpx
@@ -122,12 +123,13 @@ def test_completed_unit_is_not_eligible_for_reexecution() -> None:
 
 def test_lock_prevents_second_writer_and_is_removed(tmp_path: Path) -> None:
     path = tmp_path / "probe.lock"
-    with (
-        exclusive_lock(path),
-        pytest.raises(ValueError, match="already_running"),
-        exclusive_lock(path),
-    ):
-        pass
+    with exclusive_lock(path):
+        assert path.read_text(encoding="ascii") == str(os.getpid())
+        with (
+            pytest.raises(ValueError, match="already_running_or_stale.*remove manually"),
+            exclusive_lock(path),
+        ):
+            pass
     assert not path.exists()
 
 
@@ -321,6 +323,35 @@ async def test_preflight_refuses_to_mutate_already_resident_model(tmp_path: Path
     assert artifact.status == "infeasible"
     assert artifact.analysis["reason"] == "models_already_resident"
     assert client.loaded == {"primary"}
+
+
+@pytest.mark.asyncio
+async def test_resume_digest_check_ignores_unrelated_installed_models(
+    tmp_path: Path, monkeypatch
+) -> None:
+    async def no_memory():
+        raise ValueError("unavailable")
+
+    monkeypatch.setattr("synapse_bench.native_runner.windows_host_memory", no_memory)
+    artifact = new_artifact(settings(), profile="smoke", probes={"prefix-reuse"}, seed=42)
+    artifact.preflight = {"model_digests": {"primary": "digest-1", "unrelated": "old"}}
+
+    code = await _run_with_client(FakeClient(), artifact, tmp_path / "digest.json")  # type: ignore[arg-type]
+
+    assert code == 0
+    assert artifact.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_execute_lock_collides_across_different_output_directories(
+    tmp_path: Path, monkeypatch
+) -> None:
+    lock = tmp_path / "runtime" / "native.lock"
+    monkeypatch.setattr("synapse_bench.native_runner.global_native_probe_lock", lambda: lock)
+    artifact = new_artifact(settings(), profile="smoke", probes={"prefix-reuse"}, seed=42)
+
+    with exclusive_lock(lock), pytest.raises(ValueError, match="already_running"):
+        await _execute(settings(), artifact, tmp_path / "different-output" / "artifact.json")
 
 
 @pytest.mark.asyncio

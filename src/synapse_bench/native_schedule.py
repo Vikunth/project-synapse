@@ -54,7 +54,11 @@ def build_schedule(seed: int, profile: str, probes: set[str]) -> dict[str, Any]:
     )
     if "dual-residency" in probes:
         dual_orders = (
-            [["solo", "dual"]]
+            [
+                ["solo", "dual"]
+                if random.Random(domain_seed(seed, "dual")).randrange(2) == 0
+                else ["dual", "solo"]
+            ]
             if dual_n == 1
             else balanced_orders(dual_n, domain_seed(seed, "dual"), ("solo", "dual"))
         )

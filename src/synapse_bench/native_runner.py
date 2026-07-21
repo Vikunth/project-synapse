@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import getpass
 import hashlib
 import json
 import os
 import statistics
+import tempfile
 import time
 import uuid
 from collections.abc import Iterator
@@ -157,7 +159,7 @@ async def resume_native_probe(path: Path) -> tuple[Path, int]:
 async def _execute(
     settings: BenchmarkSettings, artifact: NativeProbeArtifact, path: Path
 ) -> tuple[Path, int]:
-    lock_path = path.parent / ".native-probe.lock"
+    lock_path = global_native_probe_lock()
     with exclusive_lock(lock_path):
         write_model_atomic(path, artifact)
         try:
@@ -278,7 +280,9 @@ async def _probe_body(
     if not required <= installed.keys():
         raise ProbeAbort("required_model_missing")
     stored_digests = artifact.preflight.get("model_digests")
-    if stored_digests and stored_digests != installed:
+    if isinstance(stored_digests, dict) and any(
+        stored_digests.get(model) != installed.get(model) for model in required
+    ):
         raise ProbeAbort("model_digest_changed")
     residents = await client.residents()
     resident_names = {row.name for row in residents}
@@ -998,13 +1002,21 @@ def _configuration_sha256(configuration: NativeProbeConfiguration) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def global_native_probe_lock() -> Path:
+    """Return one fail-closed per-user lock path, independent of artifact output."""
+    user_key = hashlib.sha256(getpass.getuser().encode("utf-8")).hexdigest()[:12]
+    return Path(tempfile.gettempdir()) / f"synapse-native-probe-{user_key}.lock"
+
+
 @contextmanager
 def exclusive_lock(path: Path) -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
-        raise ValueError("native_probe_already_running") from None
+        raise ValueError(
+            f"native_probe_already_running_or_stale; inspect PID and remove manually: {path}"
+        ) from None
     try:
         os.write(descriptor, str(os.getpid()).encode("ascii"))
         os.close(descriptor)
