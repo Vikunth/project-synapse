@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="680" viewBox="0 0 1040 680" role="img" aria-labelledby="title desc">
+  <title id="title">B2 time to first token: first request versus repeats</title>
+  <desc id="desc">Grouped bars compare first-request TTFT with the median TTFT of four later requests for each actual prompt evaluation count.</desc>
+  <rect width="1040" height="680" fill="#ffffff"/>
+  <style>text{font-family:Arial,sans-serif;fill:#172033}.title{font-size:26px;font-weight:700}.subtitle{font-size:14px;fill:#526079}.axis{stroke:#526079;stroke-width:1}.grid{stroke:#d9dee8;stroke-width:1}.tick{font-size:13px}.label{font-size:14px;font-weight:600}.value{font-size:12px;font-weight:700}.note{font-size:13px;fill:#526079}</style>
+  <text x="70" y="48" class="title">B2: first request vs repeat TTFT</text>
+  <text x="70" y="76" class="subtitle">Grouped by actual prompt_eval_count, not requested prefix target</text>
+  <line x1="90" y1="510.0" x2="960" y2="510.0" class="grid"/>
+  <text x="76" y="515.0" text-anchor="end" class="tick">0</text>
+  <line x1="90" y1="432.0" x2="960" y2="432.0" class="grid"/>
+  <text x="76" y="437.0" text-anchor="end" class="tick">2</text>
+  <line x1="90" y1="354.0" x2="960" y2="354.0" class="grid"/>
+  <text x="76" y="359.0" text-anchor="end" class="tick">4</text>
+  <line x1="90" y1="276.0" x2="960" y2="276.0" class="grid"/>
+  <text x="76" y="281.0" text-anchor="end" class="tick">6</text>
+  <line x1="90" y1="198.0" x2="960" y2="198.0" class="grid"/>
+  <text x="76" y="203.0" text-anchor="end" class="tick">8</text>
+  <line x1="90" y1="120.0" x2="960" y2="120.0" class="grid"/>
+  <text x="76" y="125.0" text-anchor="end" class="tick">10</text>
+  <line x1="90" y1="120" x2="90" y2="510" class="axis"/>
+  <line x1="90" y1="510" x2="960" y2="510" class="axis"/>
+  <text x="24" y="315" transform="rotate(-90 24 315)" class="label">TTFT (seconds)</text>
+  <rect x="650" y="91" width="14" height="14" fill="#2457c5"/><text x="672" y="103" class="tick">First request</text>
+  <rect x="790" y="91" width="14" height="14" fill="#16a085"/><text x="812" y="103" class="tick">Later median</text>
+  <rect x="140.8" y="479.5" width="52" height="30.5" rx="3" fill="#2457c5"/>
+  <text x="166.8" y="471.5" text-anchor="middle" class="value">0.782s</text>
+  <rect x="204.8" y="484.9" width="52" height="25.1" rx="3" fill="#16a085"/>
+  <text x="230.8" y="476.9" text-anchor="middle" class="value">0.644s</text>
+  <text x="198.8" y="535" text-anchor="middle" class="label">139 tokens</text>
+  <text x="198.8" y="555" text-anchor="middle" class="tick">first n=1; later n=4</text>
+  <rect x="358.2" y="409.5" width="52" height="100.5" rx="3" fill="#2457c5"/>
+  <text x="384.2" y="401.5" text-anchor="middle" class="value">2.576s</text>
+  <rect x="422.2" y="483.5" width="52" height="26.5" rx="3" fill="#16a085"/>
+  <text x="448.2" y="475.5" text-anchor="middle" class="value">0.678s</text>
+  <text x="416.2" y="535" text-anchor="middle" class="label">238 tokens</text>
+  <text x="416.2" y="555" text-anchor="middle" class="tick">first n=1; later n=4</text>
+  <rect x="575.8" y="323.6" width="52" height="186.4" rx="3" fill="#2457c5"/>
+  <text x="601.8" y="315.6" text-anchor="middle" class="value">4.779s</text>
+  <rect x="639.8" y="483.5" width="52" height="26.5" rx="3" fill="#16a085"/>
+  <text x="665.8" y="475.5" text-anchor="middle" class="value">0.679s</text>
+  <text x="633.8" y="535" text-anchor="middle" class="label">435 tokens</text>
+  <text x="633.8" y="555" text-anchor="middle" class="tick">first n=1; later n=4</text>
+  <rect x="793.2" y="140.9" width="52" height="369.1" rx="3" fill="#2457c5"/>
+  <text x="819.2" y="132.9" text-anchor="middle" class="value">9.464s</text>
+  <rect x="857.2" y="481.5" width="52" height="28.5" rx="3" fill="#16a085"/>
+  <text x="883.2" y="473.5" text-anchor="middle" class="value">0.730s</text>
+  <text x="851.2" y="535" text-anchor="middle" class="label">829 tokens</text>
+  <text x="851.2" y="555" text-anchor="middle" class="tick">first n=1; later n=4</text>
+  <text x="525" y="590" text-anchor="middle" class="label">Actual prompt evaluation count</text>
+  <text x="70" y="625" class="note">Methodology: “first” is trial 0 within each measured token group; “later” is the median of trials 1–4.</text>
+  <text x="70" y="649" class="note">Caveat: the run was already warm; this comparison does not isolate KV-prefix reuse from model residency or OS caching.</text>
+</svg>

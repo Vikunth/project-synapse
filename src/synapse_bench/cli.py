@@ -9,6 +9,14 @@ from typing import Annotated, Literal
 import typer
 
 from synapse_bench.config import BenchmarkSettings
+from synapse_bench.doctor import analyze_artifact
+from synapse_bench.doctor_io import (
+    DoctorInputError,
+    load_artifact,
+    render_json,
+    render_markdown,
+    write_reports,
+)
 from synapse_bench.native_runner import PROBES, resume_native_probe, run_native_probe
 from synapse_bench.runner import SCENARIOS, run_benchmarks
 
@@ -113,6 +121,52 @@ def native_probe_resume(
     typer.echo(str(result_path))
     if code:
         raise typer.Exit(code=code)
+
+
+@app.command()
+def doctor(
+    artifact: Annotated[Path, typer.Argument(help="RunArtifact 1.0 JSON to analyze offline.")],
+    output_format: Annotated[
+        Literal["json", "markdown"],
+        typer.Option("--format", help="Stdout format when no output path is selected."),
+    ] = "markdown",
+    output_dir: Annotated[
+        Path | None, typer.Option(help="Existing directory for both versioned report files.")
+    ] = None,
+    strict: Annotated[
+        bool,
+        typer.Option(help="Exit 3 when analysis is limited or has warnings/critical findings."),
+    ] = False,
+ ) -> None:
+    """Diagnose a saved benchmark without contacting Ollama or inspecting the host."""
+    try:
+        if output_dir is not None and output_format != "markdown":
+            raise DoctorInputError("--format applies only to stdout mode")
+        run_artifact, source = load_artifact(artifact)
+        report = analyze_artifact(run_artifact, source)
+        if output_dir is not None:
+            json_path, markdown_path = write_reports(report, output_dir)
+            typer.echo(str(json_path))
+            typer.echo(str(markdown_path))
+        else:
+            typer.echo(
+                render_json(report) if output_format == "json" else render_markdown(report),
+                nl=False,
+            )
+        if strict and (
+            report.status == "limited"
+            or any(item.severity in {"warning", "critical"} for item in report.diagnoses)
+        ):
+            raise typer.Exit(code=3) from None
+    except DoctorInputError as error:
+        typer.echo(f"Doctor input error: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    except FileExistsError as error:
+        typer.echo(f"Doctor output error: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    except OSError as error:
+        typer.echo("Doctor internal/output error: report creation failed", err=True)
+        raise typer.Exit(code=1) from error
 
 
 if __name__ == "__main__":

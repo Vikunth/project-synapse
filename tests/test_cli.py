@@ -20,3 +20,13 @@ def test_cli_exposes_native_probe_run_and_resume() -> None:
     assert result.exit_code == 0
     assert "run" in result.stdout
     assert "resume" in result.stdout
+
+
+def test_cli_exposes_doctor_command() -> None:
+    result = CliRunner().invoke(app, ["doctor", "--help"])
+
+    assert result.exit_code == 0
+    command = get_command(app)
+    doctor_command = command.commands["doctor"]
+    parameter_names = {parameter.name for parameter in doctor_command.params}
+    assert {"artifact", "output_format", "output_dir", "strict"} <= parameter_names
