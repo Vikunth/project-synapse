@@ -14,6 +14,14 @@ def test_cli_exposes_documented_run_command() -> None:
     assert {"profile", "scenarios"} <= parameter_names
 
 
+def test_cli_exposes_native_probe_run_and_resume() -> None:
+    result = CliRunner().invoke(app, ["native-probe", "--help"])
+
+    assert result.exit_code == 0
+    assert "run" in result.stdout
+    assert "resume" in result.stdout
+
+
 def test_cli_exposes_doctor_command() -> None:
     result = CliRunner().invoke(app, ["doctor", "--help"])
 
