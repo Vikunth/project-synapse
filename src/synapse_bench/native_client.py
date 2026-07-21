@@ -107,7 +107,12 @@ class NativeOllamaClient:
                     response.raise_for_status()
                     async for item in _json_lines(response.aiter_lines()):
                         if item.get("error"):
-                            raise RuntimeError("upstream_error")
+                            message = str(item["error"]).lower()
+                            raise RuntimeError(
+                                "oom"
+                                if "out of memory" in message or "oom" in message
+                                else "upstream_error"
+                            )
                         if item.get("response") and first is None:
                             first = time.perf_counter()
                         if item.get("done"):
@@ -156,7 +161,8 @@ def safe_error_code(error: Exception) -> str:
         return "transport_error"
     return (
         str(error)
-        if str(error) in {"upstream_error", "no_generated_token", "residency_transition_timeout"}
+        if str(error)
+        in {"upstream_error", "oom", "no_generated_token", "residency_transition_timeout"}
         else "invalid_response"
     )
 

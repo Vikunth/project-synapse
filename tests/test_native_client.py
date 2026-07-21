@@ -65,6 +65,25 @@ async def test_partial_stream_failure_returns_only_allowlisted_error_code() -> N
     assert secret not in result.model_dump_json()
 
 
+@pytest.mark.asyncio
+async def test_ollama_oom_body_is_reduced_to_bounded_safety_code() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=(
+                json.dumps({"error": "runner: OUT OF MEMORY allocating secret"}) + "\n"
+            ).encode(),
+        )
+
+    async with NativeOllamaClient(settings(), transport=httpx.MockTransport(handler)) as client:
+        result = await client.generate(
+            "model", "synthetic", "opaque-oom", num_ctx=1024, num_predict=24
+        )
+
+    assert result.error_code == "oom"
+    assert "allocating" not in result.model_dump_json()
+
+
 def test_http_error_code_does_not_include_response_body() -> None:
     request = httpx.Request("POST", "http://127.0.0.1/api/generate")
     response = httpx.Response(503, request=request, text="secret upstream body")
