@@ -40,4 +40,9 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(proxy_router)
 
+    @app.get("/")
+    async def root() -> dict[str, str]:
+        """Root endpoint returning basic proxy info."""
+        return {"message": "Synapse Proxy is running", "version": __version__}
+
     return app
