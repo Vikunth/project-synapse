@@ -14,7 +14,7 @@ class SynapseConfig(BaseSettings):
 
     host: str = "127.0.0.1"
     port: int = 11435
-    upstream_timeout: float = 120.0
+    upstream_timeout: float = 3600.0
     max_request_bytes: int = 50 * 1024 * 1024
 
 
@@ -34,6 +34,10 @@ def resolve_ollama_url() -> str:
             url = ollama_host
         else:
             url = f"http://{ollama_host}"
+
+        # 0.0.0.0 is used for binding, but is unroutable for clients on Windows.
+        # Replace it with 127.0.0.1 so the proxy can actually connect to Ollama.
+        url = url.replace("0.0.0.0", "127.0.0.1")
     else:
         # Check for WSL2
         is_wsl2 = platform.system() == "Linux" and "microsoft" in platform.release().lower()

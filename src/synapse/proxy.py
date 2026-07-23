@@ -94,6 +94,40 @@ async def proxy_api_ps(request: Request) -> Response:
         return synapse_error_response(502, str(e))
 
 
+@router.get("/api/tags")
+async def proxy_api_tags(request: Request) -> Response:
+    """Transparent proxy for Ollama native /api/tags."""
+    client: httpx.AsyncClient = request.app.state.http_client
+    ollama_url: str = request.app.state.ollama_url
+
+    try:
+        upstream_resp = await client.get(f"{ollama_url.rstrip('/')}/api/tags")
+        return JSONResponse(upstream_resp.json(), status_code=upstream_resp.status_code)
+    except httpx.ConnectError:
+        return upstream_unreachable_response()
+    except httpx.TimeoutException:
+        return upstream_timeout_response()
+    except Exception as e:
+        return synapse_error_response(502, str(e))
+
+
+@router.get("/v1/models")
+async def proxy_v1_models(request: Request) -> Response:
+    """Transparent proxy for Ollama native /v1/models."""
+    client: httpx.AsyncClient = request.app.state.http_client
+    ollama_url: str = request.app.state.ollama_url
+
+    try:
+        upstream_resp = await client.get(f"{ollama_url.rstrip('/')}/v1/models")
+        return JSONResponse(upstream_resp.json(), status_code=upstream_resp.status_code)
+    except httpx.ConnectError:
+        return upstream_unreachable_response()
+    except httpx.TimeoutException:
+        return upstream_timeout_response()
+    except Exception as e:
+        return synapse_error_response(502, str(e))
+
+
 @router.post("/v1/chat/completions")
 async def proxy_v1_chat_completions(
     request: Request,

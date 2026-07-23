@@ -9,7 +9,7 @@ def test_default_config() -> None:
     config = SynapseConfig()
     assert config.host == "127.0.0.1"
     assert config.port == 11435
-    assert config.upstream_timeout == 120.0
+    assert config.upstream_timeout == 3600.0
     assert config.max_request_bytes == 50 * 1024 * 1024
 
 

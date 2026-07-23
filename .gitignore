@@ -14,3 +14,4 @@ dist/
 benchmarks/results/runs/
 benchmarks/results/native-probes/
 research/figures/
+LOCAL_SETUP_GUIDE.md
