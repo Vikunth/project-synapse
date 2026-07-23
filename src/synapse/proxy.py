@@ -13,6 +13,12 @@ from synapse.errors import (
     upstream_timeout_response,
     upstream_unreachable_response,
 )
+from synapse.translator import (
+    generate_request_id,
+    translate_ollama_chunk_to_openai_sse,
+    translate_ollama_response_to_openai,
+    translate_openai_to_ollama,
+)
 
 router = APIRouter(tags=["proxy"])
 
@@ -86,6 +92,90 @@ async def proxy_api_ps(request: Request) -> Response:
         return upstream_timeout_response()
     except Exception as e:
         return synapse_error_response(502, str(e))
+
+
+@router.post("/v1/chat/completions")
+async def proxy_v1_chat_completions(
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> Response:
+    """Translate and proxy OpenAI /v1/chat/completions to Ollama /api/chat."""
+    background_tasks.add_task(log_disconnect, request)
+    size_err = await check_request_size(request)
+    if size_err:
+        return size_err
+
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    ollama_body = translate_openai_to_ollama(body)
+    stream = ollama_body.get("stream", True)
+
+    client: httpx.AsyncClient = request.app.state.http_client
+    ollama_url: str = request.app.state.ollama_url
+    target_url = f"{ollama_url.rstrip('/')}/api/chat"
+
+    if not stream:
+        try:
+            upstream_resp = await client.post(target_url, json=ollama_body)
+            if upstream_resp.status_code != 200:
+                # Forward error
+                return JSONResponse(upstream_resp.json(), status_code=upstream_resp.status_code)
+
+            response_json = upstream_resp.json()
+            if "error" in response_json:
+                return JSONResponse(response_json, status_code=500)
+
+            request_id = generate_request_id()
+            openai_resp = translate_ollama_response_to_openai(response_json, request_id)
+            return JSONResponse(openai_resp)
+        except httpx.ConnectError:
+            return upstream_unreachable_response()
+        except httpx.TimeoutException:
+            return upstream_timeout_response()
+        except Exception as e:
+            return synapse_error_response(502, str(e))
+
+    # Streaming mode
+    request_id = generate_request_id()
+    model = body.get("model", "unknown")
+
+    async def openai_stream_generator() -> AsyncGenerator[str, None]:
+        try:
+            async with client.stream("POST", target_url, json=ollama_body) as response:
+                if response.status_code != 200:
+                    error_text = await response.aread()
+                    yield f"data: {error_text.decode('utf-8')}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+
+                async for line in response.aiter_lines():
+                    if await request.is_disconnected():
+                        request.state.disconnected = True
+                        break
+                    if not line:
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                        if "error" in chunk:
+                            yield f"data: {json.dumps(chunk)}\n\n"
+                            break
+                        sse_chunk = translate_ollama_chunk_to_openai_sse(chunk, model, request_id)
+                        yield sse_chunk
+                    except json.JSONDecodeError:
+                        continue
+                if not getattr(request.state, "disconnected", False):
+                    yield "data: [DONE]\n\n"
+        except httpx.ConnectError:
+            yield f"data: {json.dumps({'error': 'Upstream unreachable'})}\n\n"
+        except httpx.TimeoutException:
+            yield f"data: {json.dumps({'error': 'Upstream timeout'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(openai_stream_generator(), media_type="text/event-stream")
 
 
 async def stream_to_upstream(
