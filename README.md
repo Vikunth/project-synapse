@@ -10,12 +10,67 @@ This repository contains the Python backend, benchmark harness, API contracts, t
 
 ## Current status
 
-- Phase: benchmark foundation
+- Phase: full native baseline captured; proxy decision pending review
 - Supported environment: Ubuntu on WSL2, with Ollama running on the Windows host
 - Locally available models: `qwen2.5:3b` and `qwen2.5-coder:7b`
-- Proxy implementation: gated on completed baseline evidence
+- Proxy implementation: gated because the native baseline does not yet prove incremental proxy value
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for boundaries and [OVERNIGHT_LOG.md](OVERNIGHT_LOG.md) for the current run.
+
+Decision documents:
+
+- [Native baseline report](docs/BENCHMARK_REPORT.md)
+- [Post-baseline CEO review](docs/CEO_REVIEW.md)
+- [Offline Doctor contract](docs/DOCTOR.md)
+
+## Benchmark commands
+
+Install the locked development environment and run local quality checks:
+
+```bash
+uv sync --dev
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
+uv run pytest
+```
+
+From Ubuntu/WSL2, run a bounded smoke profile before the full Phase 0 suite:
+
+```bash
+export UV_PROJECT_ENVIRONMENT="$HOME/.local/share/synapse-bench-venv"
+uv sync --locked --dev
+uv run synapse-bench run --profile quick
+uv run synapse-bench run --profile full
+```
+
+Keep the WSL environment outside the repository. Windows and Linux virtual environments are
+not binary-compatible and must not share `.venv`.
+
+Use `--scenario b0` through `--scenario b4` to select individual scenarios. The harness
+discovers the WSL default gateway automatically. Override it with `OLLAMA_HOST` only when
+needed, for example `OLLAMA_HOST=http://172.27.224.1:11434`. Public hosts are rejected unless
+`SYNAPSE_ALLOW_REMOTE=true` is explicitly set.
+
+Results are written atomically under `benchmarks/results/runs/`. B0 is *runtime-cold*: it
+unloads Ollama residency but does not clear the operating-system page cache or emulate a reboot.
+The reviewed full native artifact is committed at `benchmarks/results/baseline.json`.
+
+## Offline Doctor
+
+Analyze an existing artifact without contacting Ollama or changing settings:
+
+```bash
+uv run synapse doctor benchmarks/results/baseline.json
+uv run synapse doctor benchmarks/results/baseline.json --format json
+mkdir -p reports
+uv run synapse doctor benchmarks/results/baseline.json --output-dir reports
+```
+
+The default writes Markdown only to stdout. `--output-dir` creates versioned JSON and Markdown
+without overwriting existing files. Doctor reports omit prompt hashes, raw errors, absolute paths,
+and Ollama host data. Findings recommend controlled experiments; they do not prove proxy value or
+automatically mutate configuration.
 
 ## Privacy
 
